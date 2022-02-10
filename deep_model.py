@@ -10,9 +10,11 @@ from sklearn.metrics import f1_score
 from HeBERT.src.HebEMO import *
 
 def metric_fn(predictions):
-    preds = predictions.predictions.argmax(axis=1)
+    preds = predictions.predictions.argmax(axis=2)
     labels = predictions.label_ids
     # f1 = f1_score(preds, labels, average='binary')
+    print(f' np.sum(preds == labels) = {np.sum(preds == labels)}')
+    print(f'np.size(labels) = {np.size(labels)}')
     acc = np.sum(preds == labels) / np.size(labels)
     # return {'f1': f1, 'acc': acc}
     return {'acc': acc}
