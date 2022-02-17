@@ -15,9 +15,18 @@ def metric_fn(predictions):
     # f1 = f1_score(preds, labels, average='binary')
     print(f' np.sum(preds == labels) = {np.sum(preds == labels)}')
     print(f'np.size(labels) = {np.size(labels)}')
-    acc = np.sum(preds == labels) / np.size(labels)
+    num_masks = np.sum(labels != -100)
+    print(f'num_masks = {num_masks}')
+    acc = np.sum(preds == labels) / num_masks
+    # acc = np.sum(preds == labels) / np.size(labels)
     # return {'f1': f1, 'acc': acc}
-    return{'acc': acc}
+
+    # # top k accuracy
+    # k = 10
+    # top_k_preds = torch.topk(predictions.predictions, dim=2)
+
+
+    return {'acc': acc}
 
 
 def get_data():
@@ -162,8 +171,38 @@ def AlephBert_LM():
     )
 
     # train
+
+    dummy_test(model, tokenizer)
     trainer.train()
+    dummy_test(model, tokenizer)
     print('done')
 
+
+
+def dummy_test(model, tokenizer):
+    print("dummy test")
+    device = model.device.index if str(model.device).startswith('cuda') else -1
+    nlp_fill_mask_ita = pipeline(
+        "fill-mask",
+        model=model,
+        tokenizer=tokenizer,
+        device=device
+    )
+
+    sentences =['הפעימות החדריות המוקדמות מקורן מספר [MASK] שונים',
+                'הפעימות החדריות [MASK] מקורן מספר מוקדים שונים',
+                 'רישום למשך כ- 48 [MASK], מקצב בסיסי סינוס 60-90 לקדה.',
+                'רישום למשך כ- 48 שעות, מקצב בסיסי [MASK] 60-90 לקדה.',
+                'מקצב סינוס עם הולכה עלייתית-חדרית עם מקטע [MASK] מוארך.',
+                'מקצב סינוס עם הולכה עלייתית-[MASK] עם מקטע PR מוארך.',
+                'מקצב סינוס עם הולכה [MASK]-חדרית עם מקטע PR מוארך.'
+                ]
+    for sentence in sentences:
+        print("masked sentence:")
+        print(sentence)
+        res = nlp_fill_mask_ita(sentence)
+        print("model output:")
+        for _res in res:
+            print(_res['sequence'])
 if __name__ == '__main__':
     AlephBert_LM()
