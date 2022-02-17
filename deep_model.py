@@ -6,6 +6,7 @@ import os
 from transformers import AutoTokenizer, AutoModel,pipeline
 from transformers import BertModel, BertTokenizerFast
 from transformers import AutoConfig, AutoModelForMaskedLM, TrainingArguments,Trainer, DataCollatorForWholeWordMask
+from transformers import AutoModelForSequenceClassification
 from datasets import Dataset
 
 import utils
@@ -96,7 +97,7 @@ def combine_text(df, col_a = 'text a', col_b ='text b'):
 
         combined_text_list.append(text)
     assert len(combined_text_list) == len(
-        df), f' len(combined_text_list)= {len(combined_text_list)} len(my_dictionary)={len(my_dictionary)} need to be same length'
+        df), f' len(combined_text_list)= {len(combined_text_list)} len(my_dictionary)={len(df)} need to be same length'
     df['Text'] = combined_text_list
     df = df.drop(df[df.Text == ''].index)
     return df
@@ -199,12 +200,15 @@ def AlephBert_LM(args, my_dictionary, validation_set):
 def classify_head(args,train_set_l, val_set,label_col = 'AFIB'):
 
     model, config = utils.load_model_for_classificaion(os.path.join(args.out_dir_LM, 'best_model/'))
+    # model = AutoModelForSequenceClassification.from_pretrained(args.model_name)
 
     dataset = {
         'train': Dataset.from_pandas(train_set_l),
-        'val': Dataset.from_pandas(val_set)
+        'val': Dataset.from_pandas(val_set.astype(str))
     }
 
+    #convert label_col from str to int
+    dataset['val'] = dataset['val'].map(lambda x: x.update({label_col: int(x[label_col])}) or x)
 
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
 
@@ -288,4 +292,4 @@ if __name__ == '__main__':
     utils.set_seed(args.seed)
     train_set_nl, val_set, test_set, train_set_l = preprocessing(args)
     AlephBert_LM(args=args, my_dictionary=train_set_nl, validation_set=val_set)
-    classify_head(args, train_set_l, val_set, label_col='AFIB')
+    classify_head(args, train_set_l, test_set, label_col='AFIB')
