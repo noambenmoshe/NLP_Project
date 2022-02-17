@@ -17,13 +17,23 @@ def metric_fn(predictions):
     print(f'np.size(labels) = {np.size(labels)}')
     acc = np.sum(preds == labels) / np.size(labels)
     # return {'f1': f1, 'acc': acc}
-    return {'acc': acc}
+    return{'acc': acc}
 
 
 def get_data():
     path_to_rbdf = '/MLAIM/AIMLab/Shany/databases/rbafdb/'
     path_to_dictionary = path_to_rbdf + 'documentation/reports/RBAF_reports.xlsx'
+    path_to_validation = path_to_rbdf + 'documentation/reports/test_ann_sheina.xlsx'
+    path_to_test = path_to_rbdf + 'documentation/reports/test_ann_sheina2.xlsx'
     my_dictionary = pd.read_excel(path_to_dictionary, engine='openpyxl')
+    validation_set = pd.read_excel(path_to_validation, engine='openpyxl')
+    test_set = pd.read_excel(path_to_test, engine='openpyxl')
+    test_set_ids = test_set['Unnamed: 0'].tolist()
+    validation_set_ids = validation_set['Unnamed: 0'].tolist()
+    #remove test_set ids from the training set
+    my_dictionary = my_dictionary[~my_dictionary['holter_id'].isin(test_set_ids)]
+    my_dictionary = my_dictionary[~my_dictionary['holter_id'].isin(validation_set_ids)]
+
     return my_dictionary
 
 
@@ -57,34 +67,52 @@ def get_args():
     parser.add_argument("--out_dir", help="dir to save trained model", type=str, default='./Output')
     args = parser.parse_args()
     return args
-
-def AlephBert_LM():
-    args = get_args()
-    path_to_rbdf = '/MLAIM/AIMLab/Shany/databases/rbafdb/'
-    path_to_dictionary = path_to_rbdf + 'documentation/reports/RBAF_reports.xlsx'
-    my_dictionary = pd.read_excel(path_to_dictionary, engine='openpyxl')
+def combine_text(df, col_a = 'text a', col_b ='text b'):
     combined_text_list = []
-    for i, id in enumerate(my_dictionary['holter_id']):
-        j =  int(my_dictionary['holter_id'][my_dictionary['holter_id'] == id].index.values)
-        text_a = my_dictionary['טקסט מתוך סיכום'][j]
-        text_b = my_dictionary['טקסט מתוך תוצאות'][j]
-        if pd.isna(text_a) or text_a ==0 or text_a == ' ':
+    for i, id in enumerate(df['holter_id']):
+        j = int(df['holter_id'][df['holter_id'] == id].index.values)
+        text_a = df[col_a][j]
+        text_b = df[col_b][j]
+        if pd.isna(text_a) or text_a == 0 or text_a == ' ':
             text = ''
         else:
             text = text_a
-        if not(pd.isna(text_b)  or text_b ==0  or text_b == ' '):
-            text = text+ text_b
+        if not (pd.isna(text_b) or text_b == 0 or text_b == ' '):
+            text = text + text_b
 
         combined_text_list.append(text)
-    assert len(combined_text_list) == len(my_dictionary), f' len(combined_text_list)= {len(combined_text_list)} len(my_dictionary)={len(my_dictionary)} need to be same length'
-    my_dictionary['Text'] = combined_text_list
-    my_dictionary = my_dictionary.drop(my_dictionary[my_dictionary.Text == ''].index)
+    assert len(combined_text_list) == len(
+        df), f' len(combined_text_list)= {len(combined_text_list)} len(my_dictionary)={len(my_dictionary)} need to be same length'
+    df['Text'] = combined_text_list
+    df = df.drop(df[df.Text == ''].index)
+    return df
 
-    train = my_dictionary.sample(frac=0.8, random_state=200)  # random state is a seed value
-    test = my_dictionary.drop(train.index)
+def AlephBert_LM():
+    args = get_args()
+
+    path_to_rbdf = '/MLAIM/AIMLab/Shany/databases/rbafdb/'
+    main_path = '/home/b.noam/NLP_Project/'
+    path_to_dictionary = path_to_rbdf + 'documentation/reports/RBAF_reports.xlsx'
+    path_to_validation = main_path + 'validation_set.xlsx'
+    path_to_test = main_path + 'test_set.xlsx'
+
+    my_dictionary = pd.read_excel(path_to_dictionary, engine='openpyxl')
+    validation_set = pd.read_excel(path_to_validation, engine='openpyxl')
+    test_set = pd.read_excel(path_to_test, engine='openpyxl')
+
+    test_set_ids = test_set['holter_id'].tolist()
+    validation_set_ids = validation_set['holter_id'].tolist()
+    # remove test_set ids from the training set
+    my_dictionary = my_dictionary[~my_dictionary['holter_id'].isin(test_set_ids)]
+    # remove validation_set ids from the training set
+    my_dictionary = my_dictionary[~my_dictionary['holter_id'].isin(validation_set_ids)]
+
+    my_dictionary =combine_text(my_dictionary, col_a='טקסט מתוך סיכום', col_b='טקסט מתוך תוצאות')
+    validation_set = combine_text(validation_set)
+
     dataset = {
-        'train': Dataset.from_pandas(train.astype(str)),
-        'test': Dataset.from_pandas(test.astype(str))
+        'train': Dataset.from_pandas(my_dictionary.astype(str)),
+        'val': Dataset.from_pandas(validation_set.astype(str))
     }
 
 
@@ -94,7 +122,7 @@ def AlephBert_LM():
     tokenized_datasets = {'train': dataset['train'].map(tokenizer, input_columns=['Text'], fn_kwargs={"max_length": args.max_length, #Todo check that this is a good max
                                                                                         "truncation": True,
                                                                                         "padding": "max_length"}),
-                          'test': dataset['test'].map(tokenizer, input_columns=['Text'],
+                          'val': dataset['val'].map(tokenizer, input_columns=['Text'],
                                                fn_kwargs={"max_length": args.max_length,
                                                           # Todo check that this is a good max
                                                           "truncation": True,
@@ -102,7 +130,7 @@ def AlephBert_LM():
                           }
 
     tokenized_datasets['train'].set_format('torch')
-    tokenized_datasets['test'].set_format('torch')
+    tokenized_datasets['val'].set_format('torch')
     data_collator = DataCollatorForWholeWordMask(tokenizer=tokenizer, mlm=True,
                                                  mlm_probability=args.prob_for_mask)
 
@@ -128,7 +156,7 @@ def AlephBert_LM():
         model=model,
         args=training_args,
         train_dataset=tokenized_datasets['train'],
-        eval_dataset=tokenized_datasets['test'],
+        eval_dataset=tokenized_datasets['val'],
         compute_metrics=metric_fn,
         data_collator=data_collator
     )
