@@ -2,10 +2,13 @@ import pandas as pd
 import torch
 import argparse
 import numpy as np
+import os
 from transformers import AutoTokenizer, AutoModel,pipeline
 from transformers import BertModel, BertTokenizerFast
 from transformers import AutoConfig, AutoModelForMaskedLM, TrainingArguments,Trainer, DataCollatorForWholeWordMask
 from datasets import Dataset
+
+import utils
 from sklearn.metrics import f1_score
 from HeBERT.src.HebEMO import *
 
@@ -20,14 +23,14 @@ def metric_fn(predictions):
     acc = np.sum(preds == labels) / num_masks
     # acc = np.sum(preds == labels) / np.size(labels)
     # return {'f1': f1, 'acc': acc}
+    return{'acc': acc}
 
-    # # top k accuracy
-    # k = 10
-    # top_k_preds = torch.topk(predictions.predictions, dim=2)
-
-
-    return {'acc': acc}
-
+def metric_fn_clssify(predictions):
+    preds = predictions.predictions.argmax(axis=1)
+    labels = predictions.label_ids
+    f1 = f1_score(preds, labels, average='binary')
+    acc = np.sum(preds == labels) / np.size(labels)
+    return {'f1': f1, 'acc': acc}
 
 def get_data():
     path_to_rbdf = '/MLAIM/AIMLab/Shany/databases/rbafdb/'
@@ -67,15 +70,17 @@ def get_args():
     parser.add_argument("--model_name", type=str, default='onlplab/alephbert-base')
     parser.add_argument("--num_labels", type=int, default=3)
     parser.add_argument("--prob_for_mask", type=float, default=0.1)
-
+    parser.add_argument("--val_set_size", type=int, default=100)
     parser.add_argument("--batch_size", type=int, default=1)
     parser.add_argument("--grad_accum", type=int, default=4)
-    parser.add_argument("--epochs", type=int, default=10)
+    parser.add_argument("--epochs", type=int, default=3)
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--max_length", type=int, default=128)
-    parser.add_argument("--out_dir", help="dir to save trained model", type=str, default='./Output')
+    parser.add_argument("--out_dir_LM", help="dir to save trained model", type=str, default='./Output_LM')
+    parser.add_argument("--out_dir_Classify", help="dir to save trained model", type=str, default='./Output_Classify')
     args = parser.parse_args()
     return args
+
 def combine_text(df, col_a = 'text a', col_b ='text b'):
     combined_text_list = []
     for i, id in enumerate(df['holter_id']):
@@ -96,9 +101,7 @@ def combine_text(df, col_a = 'text a', col_b ='text b'):
     df = df.drop(df[df.Text == ''].index)
     return df
 
-def AlephBert_LM():
-    args = get_args()
-
+def preprocessing(args):
     path_to_rbdf = '/MLAIM/AIMLab/Shany/databases/rbafdb/'
     main_path = '/home/b.noam/NLP_Project/'
     path_to_dictionary = path_to_rbdf + 'documentation/reports/RBAF_reports.xlsx'
@@ -111,13 +114,28 @@ def AlephBert_LM():
 
     test_set_ids = test_set['holter_id'].tolist()
     validation_set_ids = validation_set['holter_id'].tolist()
+
+    labeled_data_ids = validation_set_ids[args.val_set_size:]
+    validation_set_ids = validation_set_ids[:args.val_set_size]
+
     # remove test_set ids from the training set
     my_dictionary = my_dictionary[~my_dictionary['holter_id'].isin(test_set_ids)]
     # remove validation_set ids from the training set
     my_dictionary = my_dictionary[~my_dictionary['holter_id'].isin(validation_set_ids)]
 
-    my_dictionary =combine_text(my_dictionary, col_a='טקסט מתוך סיכום', col_b='טקסט מתוך תוצאות')
-    validation_set = combine_text(validation_set)
+    #remove labeled data ids from validation
+    val_set = validation_set[validation_set['holter_id'].isin(validation_set_ids)]
+    #create a labled data set (all of the validation set that is not part of the validaion set)
+    labeled_data = validation_set[validation_set['holter_id'].isin(labeled_data_ids)]
+
+    my_dictionary = combine_text(my_dictionary, col_a='טקסט מתוך סיכום', col_b='טקסט מתוך תוצאות')
+    val_set = combine_text(val_set)
+    test_set = combine_text(test_set)
+    labeled_data = combine_text(labeled_data)
+
+    return my_dictionary, val_set, test_set, labeled_data
+
+def AlephBert_LM(args, my_dictionary, validation_set):
 
     dataset = {
         'train': Dataset.from_pandas(my_dictionary.astype(str)),
@@ -144,7 +162,7 @@ def AlephBert_LM():
                                                  mlm_probability=args.prob_for_mask)
 
     # creat trainer
-    training_args = TrainingArguments(output_dir=args.out_dir, overwrite_output_dir=True,
+    training_args = TrainingArguments(output_dir=args.out_dir_LM, overwrite_output_dir=True,
                                       per_device_train_batch_size=args.batch_size,
                                       per_device_eval_batch_size=args.batch_size,
                                       gradient_accumulation_steps=args.grad_accum,
@@ -170,11 +188,70 @@ def AlephBert_LM():
         data_collator=data_collator
     )
 
-    # train
-
     dummy_test(model, tokenizer)
+    # train
     trainer.train()
     dummy_test(model, tokenizer)
+    # save best model
+    utils.save_model(model, vars(args), os.path.join(args.out_dir_LM, 'best_model/'))
+    print('done')
+
+def classify_head(args,train_set_l, val_set,label_col = 'AFIB'):
+
+    model, config = utils.load_model_for_classificaion(os.path.join(args.out_dir_LM, 'best_model/'))
+
+    dataset = {
+        'train': Dataset.from_pandas(train_set_l),
+        'val': Dataset.from_pandas(val_set)
+    }
+
+
+    tokenizer = AutoTokenizer.from_pretrained(args.model_name)
+
+
+    tokenized_datasets = {'train': dataset['train'].map(tokenizer, input_columns=['Text'],
+                                                        fn_kwargs={"max_length": args.max_length,
+                                                                   # Todo check that this is a good max
+                                                                   "truncation": True,
+                                                                   "padding": "max_length"}),
+                          'val': dataset['val'].map(tokenizer, input_columns=['Text'],
+                                                    fn_kwargs={"max_length": args.max_length,
+                                                               # Todo check that this is a good max
+                                                               "truncation": True,
+                                                               "padding": "max_length"})
+                          }
+
+    tokenized_datasets['train'].set_format('torch')
+    tokenized_datasets['val'].set_format('torch')
+
+    for split in tokenized_datasets:
+        tokenized_datasets[split] = tokenized_datasets[split].add_column('label', dataset[split][label_col])
+
+    training_args = TrainingArguments(output_dir=args.out_dir_Classify, overwrite_output_dir=True,
+                                      per_device_train_batch_size=args.batch_size,
+                             per_device_eval_batch_size=args.batch_size,
+                             gradient_accumulation_steps=args.grad_accum,
+                             save_strategy='epoch',
+                            save_total_limit=1,
+                             load_best_model_at_end=True,
+                             metric_for_best_model='acc',
+                             greater_is_better=True, evaluation_strategy='epoch', do_train=True,
+                             num_train_epochs=args.epochs,
+                             report_to= None,
+                             )
+
+    trainer = Trainer(
+        model=model,
+        args=training_args,
+        train_dataset=tokenized_datasets['train'],
+        eval_dataset=tokenized_datasets['val'],
+        compute_metrics=metric_fn_clssify
+    )
+
+    # train
+    trainer.train()
+    # save best model
+    utils.save_model(model, vars(args), os.path.join(args.out_dir_Classify, 'best_model/'))
     print('done')
 
 
@@ -204,5 +281,11 @@ def dummy_test(model, tokenizer):
         print("model output:")
         for _res in res:
             print(_res['sequence'])
+
+
 if __name__ == '__main__':
-    AlephBert_LM()
+    args = get_args()
+    utils.set_seed(args.seed)
+    train_set_nl, val_set, test_set, train_set_l = preprocessing(args)
+    AlephBert_LM(args=args, my_dictionary=train_set_nl, validation_set=val_set)
+    classify_head(args, train_set_l, val_set, label_col='AFIB')
