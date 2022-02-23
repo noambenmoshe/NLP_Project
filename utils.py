@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import json
 from transformers import AutoModelForSequenceClassification
+import matplotlib.pyplot as plt
 
 def set_seed(seed=42):
     random.seed(seed)
@@ -36,3 +37,34 @@ def load_model_for_classificaion(dir):
                                                                                   num_labels=config['num_labels'])
     model.load_state_dict(torch.load(os.path.join(dir, 'model.pt')),strict=False)
     return model, config
+
+def data_stats(tokenized_data, out_dir, col_name):
+    # generate dataset statistics
+    train_len = []
+    val_len = []
+
+
+    for i in tokenized_data['train']:
+        train_len.append(len(i[col_name]))
+
+    for i in tokenized_data['val']:
+        val_len.append(len(i[col_name]))
+
+    plt.figure()
+    hist = plt.hist(train_len,bins=1000, cumulative=True, label='CDF',
+             histtype='step', alpha=0.8, color='k', density=True)
+    plt.title('train reviews lengths CDF')
+    plt.xlim(xmin=0, xmax=500)
+    plt.savefig(os.path.join(out_dir, 'train_review_length.png'))
+    plt.show()
+
+    plt.figure()
+    plt.hist(val_len, bins=1000, cumulative=True, label='CDF',
+             histtype='step', alpha=0.8, color='k', density=True)
+    plt.title('validation reviews lengths CDF')
+    plt.xlim(xmin=0, xmax=500)
+
+    plt.savefig(os.path.join(out_dir, 'val_review_length.png'))
+    plt.show()
+
+    return
