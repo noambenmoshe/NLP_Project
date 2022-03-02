@@ -11,7 +11,9 @@ from datasets import Dataset
 import utils
 from preprocess import load_preprocessed
 from sklearn.metrics import f1_score, confusion_matrix
+from custom_trainer import CustomTrainer
 from HeBERT.src.HebEMO import *
+
 
 def metric_fn(predictions):
     preds = predictions.predictions.argmax(axis=2)
@@ -33,9 +35,9 @@ def metric_fn_clssify(predictions):
     acc = np.sum(preds == labels) / np.size(labels)
     cm1 = confusion_matrix(labels, preds)
     print('Confusion Matrix : \n', cm1)
-    sensitivity1 = cm1[0, 0] / (cm1[0, 0] + cm1[0, 1])
+    sensitivity1 = cm1[1, 1] / (cm1[1, 0] + cm1[1, 1])
     print('Sensitivity : ', sensitivity1)
-    specificity1 = cm1[1, 1] / (cm1[1, 0] + cm1[1, 1])
+    specificity1 = cm1[0, 0] / (cm1[0, 0] + cm1[0, 1])
     print('Specificity : ', specificity1)
     print('f1 : ', f1)
     print('acc :', acc)
@@ -81,7 +83,7 @@ def get_args():
     parser.add_argument("--model_name", type=str, default='onlplab/alephbert-base')  #bionlp/bluebert_pubmed_uncased_L-12_H-768_A-12 #microsoft/BiomedNLP-PubMedBERT-base-uncased-abstract
     parser.add_argument("--language", type=str, default='HE')  #EN
     parser.add_argument("--num_labels", type=int, default=2)
-    parser.add_argument("--prob_for_mask", type=float, default=0.1)
+    parser.add_argument("--prob_for_mask", type=float, default=0.3)
     parser.add_argument("--val_set_size", type=int, default=100)
     parser.add_argument("--batch_size", type=int, default=1)
     parser.add_argument("--grad_accum", type=int, default=4)
@@ -91,6 +93,8 @@ def get_args():
     parser.add_argument("--out_dir_LM", help="dir to save trained model", type=str, default='./Output_LM')
     parser.add_argument("--out_dir_Classify", help="dir to save trained model", type=str, default='./Output_Classify')
     parser.add_argument("--verbos", help="add extra prints and figures", type=bool, default=False)
+    parser.add_argument("--weights", help="weights for cross entropy loss ", type=list, default=[1.0, 10.0])
+
     args = parser.parse_args()
     return args
 
@@ -149,7 +153,7 @@ def preprocessing(args):
     return my_dictionary, val_set, test_set, labeled_data
 
 def LM_head(args, my_dictionary, validation_set):
-
+    print(f'args.lanuage == {args.language}')
     if args.language == 'HE':
         col_name = 'Text'
     else:
@@ -207,11 +211,12 @@ def LM_head(args, my_dictionary, validation_set):
         compute_metrics=metric_fn,
         data_collator=data_collator
     )
-
-    dummy_test(model, tokenizer)
+    if args.language == 'HE':
+        dummy_test(model, tokenizer)
     # train
     trainer.train()
-    dummy_test(model, tokenizer)
+    if args.language == 'HE':
+        dummy_test(model, tokenizer)
     # save best model
     utils.save_model(model, vars(args), os.path.join(args.out_dir_LM, 'best_model/'))
     print('done')
@@ -226,7 +231,7 @@ def classify_head(args,train_set_l, val_set,label_col = 'AFIB',mode ='Train', di
         if mode == 'Train':
             dir_to_load =args.out_dir_LM
         else:
-            dir_to_load = args.out_dir_Classify
+            dir_to_load = args.out_dir_Classify + "/" + label_col
 
     model, config = utils.load_model_for_classificaion(os.path.join(dir_to_load, 'best_model/'))
     # model = AutoModelForSequenceClassification.from_pretrained(args.model_name)
@@ -268,18 +273,19 @@ def classify_head(args,train_set_l, val_set,label_col = 'AFIB',mode ='Train', di
                                       save_strategy='epoch',
                                       save_total_limit=1,
                                       load_best_model_at_end=True,
-                                      metric_for_best_model='acc',
+                                      metric_for_best_model='f1',
                                       greater_is_better=True, evaluation_strategy='epoch', do_train=True if mode == 'Train' else False,
                                       num_train_epochs=args.epochs,
                                       report_to= None,
                                       )
 
-    trainer = Trainer(
+    trainer = CustomTrainer(
         model=model,
         args=training_args,
         train_dataset=tokenized_datasets['train'],
         eval_dataset=tokenized_datasets['val'],
-        compute_metrics=metric_fn_clssify
+        compute_metrics=metric_fn_clssify,
+        weights = args.weights
     )
     if mode == 'Train':
         # train
@@ -287,7 +293,7 @@ def classify_head(args,train_set_l, val_set,label_col = 'AFIB',mode ='Train', di
     elif mode == 'Eval':
         trainer.evaluate()
     # save best model
-    utils.save_model(model, vars(args), os.path.join(args.out_dir_Classify, 'best_model/'))
+    utils.save_model(model, vars(args), os.path.join(args.out_dir_Classify, label_col+'/best_model/'))
     print('done')
 
 
@@ -325,7 +331,8 @@ if __name__ == '__main__':
     # train_set_nl, val_set, test_set, train_set_l = preprocessing(args)
     df = load_preprocessed()
     train_set_nl, val_set, test_set, train_set_l = df['train_set'], df['val_set'], df['test_set'], df['labeled_data']
-    classify_head(args, train_set_l, test_set, label_col='AFIB',mode = 'Eval')
+    classify_head(args, train_set_l, test_set, label_col='VT',mode = 'Eval')
+    # classify_head(args, train_set_l, test_set, label_col='AFIB',mode = 'Train')
     exit()
-    LM_head(args=args, my_dictionary=train_set_nl, validation_set=val_set)
-    classify_head(args, train_set_l, val_set, label_col='AFIB')
+    # LM_head(args=args, my_dictionary=train_set_nl, validation_set=val_set)
+    classify_head(args, train_set_l, val_set, label_col='VT')
