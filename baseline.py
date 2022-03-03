@@ -110,5 +110,34 @@ def baseline(debug = 1):
         holter_pd.loc[my_dictionary['holter_id'][j],'VT'] = result
 
 
+
+def translate_data():
+
+    path_to_rbdf = '/MLAIM/AIMLab/Shany/databases/rbafdb/'
+    main_path = '/home/b.noam/NLP_Project/'
+    path_to_dictionary = path_to_rbdf + 'documentation/reports/RBAF_reports.xlsx'
+    path_to_validation = main_path + 'validation_set.xlsx'
+    path_to_test = main_path + 'test_set.xlsx'
+
+    my_dictionary = pd.read_excel(path_to_dictionary, engine='openpyxl')
+    validation_set = pd.read_excel(path_to_validation, engine='openpyxl')
+    test_set = pd.read_excel(path_to_test, engine='openpyxl')
+
+    test_set_ids = test_set['holter_id'].tolist()
+    validation_set_ids = validation_set['holter_id'].tolist()
+    # remove test_set ids from the training set
+    my_dictionary = my_dictionary[~my_dictionary['holter_id'].isin(test_set_ids)]
+    # remove validation_set ids from the training set
+    my_dictionary = my_dictionary[~my_dictionary['holter_id'].isin(validation_set_ids)]
+
+    my_dictionary = combine_text(my_dictionary, col_a='טקסט מתוך סיכום', col_b='טקסט מתוך תוצאות')
+    validation_set = combine_text(validation_set)
+
+    dataset = {
+        'train': Dataset.from_pandas(my_dictionary.astype(str)),
+        'val': Dataset.from_pandas(validation_set.astype(str))
+    }
+
+
 if __name__ == '__main__':
     baseline()

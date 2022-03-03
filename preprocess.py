@@ -110,8 +110,8 @@ def load_raw_data(translate=True, val_set_size=100):
 
     return data_frames
 
-def load_preprocessed():
-    preprocessed_dir = '/home/b.noam/NLP_Project/preprocessed_data/'
+def load_preprocessed(preprocessed_dir):
+    # data_dir = '/home/b.noam/NLP_Project/preprocessed_data/'
     data_frames_keys = [
         'train_set',
        'val_set',

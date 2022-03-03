@@ -1,3 +1,4 @@
+import pandas
 import pandas as pd
 import torch
 import argparse
@@ -12,7 +13,6 @@ import utils
 from preprocess import load_preprocessed
 from sklearn.metrics import f1_score, confusion_matrix
 from custom_trainer import CustomTrainer
-from HeBERT.src.HebEMO import *
 
 
 def metric_fn(predictions):
@@ -28,6 +28,7 @@ def metric_fn(predictions):
     # return {'f1': f1, 'acc': acc}
     return{'acc': acc}
 
+
 def metric_fn_clssify(predictions):
     preds = predictions.predictions.argmax(axis=1)
     labels = predictions.label_ids
@@ -42,41 +43,8 @@ def metric_fn_clssify(predictions):
     print('f1 : ', f1)
     print('acc :', acc)
 
-
     return {'f1': f1, 'acc': acc, 'Sensitivity': sensitivity1, 'Specificity': specificity1 }
 
-def get_data():
-    path_to_rbdf = '/MLAIM/AIMLab/Shany/databases/rbafdb/'
-    path_to_dictionary = path_to_rbdf + 'documentation/reports/RBAF_reports.xlsx'
-    path_to_validation = path_to_rbdf + 'documentation/reports/test_ann_sheina.xlsx'
-    path_to_test = path_to_rbdf + 'documentation/reports/test_ann_sheina2.xlsx'
-    my_dictionary = pd.read_excel(path_to_dictionary, engine='openpyxl')
-    validation_set = pd.read_excel(path_to_validation, engine='openpyxl')
-    test_set = pd.read_excel(path_to_test, engine='openpyxl')
-    test_set_ids = test_set['Unnamed: 0'].tolist()
-    validation_set_ids = validation_set['Unnamed: 0'].tolist()
-    #remove test_set ids from the training set
-    my_dictionary = my_dictionary[~my_dictionary['holter_id'].isin(test_set_ids)]
-    my_dictionary = my_dictionary[~my_dictionary['holter_id'].isin(validation_set_ids)]
-
-    return my_dictionary
-
-
-def heBert_LM():
-    # HebEMO_model = HebEMO()
-    # hebEMO_df = HebEMO_model.hebemo(text='החיים יפים ומאושרים', plot=True)
-
-
-    tokenizer = AutoTokenizer.from_pretrained("avichr/heBERT")
-    model = AutoModel.from_pretrained("avichr/heBERT")
-
-    fill_mask = pipeline(
-        "fill-mask",
-        model="avichr/heBERT",
-        tokenizer="avichr/heBERT"
-    )
-    alephbert_tokenizer = BertTokenizerFast.from_pretrained('onlplab/alephbert-base')
-    alephbert = BertModel.from_pretrained('onlplab/alephbert-base')
 
 def get_args():
     parser = argparse.ArgumentParser()
@@ -84,100 +52,50 @@ def get_args():
     parser.add_argument("--language", type=str, default='HE')  #EN
     parser.add_argument("--num_labels", type=int, default=2)
     parser.add_argument("--prob_for_mask", type=float, default=0.3)
-    parser.add_argument("--val_set_size", type=int, default=100)
     parser.add_argument("--batch_size", type=int, default=1)
     parser.add_argument("--grad_accum", type=int, default=4)
     parser.add_argument("--epochs", type=int, default=5)
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--max_length", type=int, default=400)
-    parser.add_argument("--out_dir_LM", help="dir to save trained model", type=str, default='./Output_LM')
-    parser.add_argument("--out_dir_Classify", help="dir to save trained model", type=str, default='./Output_Classify')
-    parser.add_argument("--verbos", help="add extra prints and figures", type=bool, default=False)
+    # parser.add_argument("--out_dir_LM", help="dir to save trained model", type=str, default=None)
+    # parser.add_argument("--out_dir_Classify", help="dir to save trained model", type=str, default=None)
+    parser.add_argument("--load_dir", help="dir to load trained model [used for train classification with trained LM model]",
+                        type=str, default=None)
+    parser.add_argument("--out_dir", help="dir to save trained model [used to save LM / Classification trained models]",
+                        type=str, default=None)
+    parser.add_argument("--verbose", help="add extra prints and figures", type=bool, default=False)
     parser.add_argument("--weights", help="weights for cross entropy loss ", type=list, default=[1.0, 10.0])
-
+    parser.add_argument("--data_dir", help="path to preprocessed data", type=str,
+                        default='/home/b.noam/NLP_Project/preprocessed_data/')
+    parser.add_argument("--task", type=str, choices=['LM', 'AFIB', 'VT'])
     args = parser.parse_args()
     return args
 
-def combine_text(df, col_a = 'text a', col_b ='text b'):
-    combined_text_list = []
-    for i, id in enumerate(df['holter_id']):
-        j = int(df['holter_id'][df['holter_id'] == id].index.values)
-        text_a = df[col_a][j]
-        text_b = df[col_b][j]
-        if pd.isna(text_a) or text_a == 0 or text_a == ' ':
-            text = ''
-        else:
-            text = text_a
-        if not (pd.isna(text_b) or text_b == 0 or text_b == ' '):
-            text = text + text_b
 
-        combined_text_list.append(text)
-    assert len(combined_text_list) == len(
-        df), f' len(combined_text_list)= {len(combined_text_list)} len(my_dictionary)={len(df)} need to be same length'
-    df['Text'] = combined_text_list
-    df = df.drop(df[df.Text == ''].index)
-    return df
-
-def preprocessing(args):
-    path_to_rbdf = '/MLAIM/AIMLab/Shany/databases/rbafdb/'
-    main_path = '/home/b.noam/NLP_Project/'
-    path_to_dictionary = path_to_rbdf + 'documentation/reports/RBAF_reports.xlsx'
-    path_to_validation = main_path + 'validation_set.xlsx'
-    path_to_test = main_path + 'test_set.xlsx'
-
-    my_dictionary = pd.read_excel(path_to_dictionary, engine='openpyxl')
-    validation_set = pd.read_excel(path_to_validation, engine='openpyxl')
-    test_set = pd.read_excel(path_to_test, engine='openpyxl')
-
-    test_set_ids = test_set['holter_id'].tolist()
-    validation_set_ids = validation_set['holter_id'].tolist()
-
-    labeled_data_ids = validation_set_ids[args.val_set_size:]
-    validation_set_ids = validation_set_ids[:args.val_set_size]
-
-    # remove test_set ids from the training set
-    my_dictionary = my_dictionary[~my_dictionary['holter_id'].isin(test_set_ids)]
-    # remove validation_set ids from the training set
-    my_dictionary = my_dictionary[~my_dictionary['holter_id'].isin(validation_set_ids)]
-
-    #remove labeled data ids from validation
-    val_set = validation_set[validation_set['holter_id'].isin(validation_set_ids)]
-    #create a labled data set (all of the validation set that is not part of the validaion set)
-    labeled_data = validation_set[validation_set['holter_id'].isin(labeled_data_ids)]
-
-    my_dictionary = combine_text(my_dictionary, col_a='טקסט מתוך סיכום', col_b='טקסט מתוך תוצאות')
-    val_set = combine_text(val_set)
-    test_set = combine_text(test_set)
-    labeled_data = combine_text(labeled_data)
-
-    return my_dictionary, val_set, test_set, labeled_data
-
-def LM_head(args, my_dictionary, validation_set):
+def LM_head(args, train_set, validation_set):
     print(f'args.lanuage == {args.language}')
-    if args.language == 'HE':
-        col_name = 'Text'
-    else:
-        col_name ='text_en'
+    col_name = 'Text' if args.language == 'HE' else 'text_en'
 
     dataset = {
-        'train': Dataset.from_pandas(my_dictionary.astype(str)),
+        'train': Dataset.from_pandas(train_set.astype(str)),
         'val': Dataset.from_pandas(validation_set.astype(str))
     }
-
 
     model = AutoModelForMaskedLM.from_pretrained(args.model_name)
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
 
-    tokenized_datasets = {'train': dataset['train'].map(tokenizer, input_columns=[col_name], fn_kwargs={"max_length": args.max_length, #Todo check that this is a good max
-                                                                                        "truncation": True,
-                                                                                        "padding": "max_length"}),
+    tokenized_datasets = {'train': dataset['train'].map(tokenizer, input_columns=[col_name],
+                                                        fn_kwargs={"max_length": args.max_length, #Todo check that this is a good max
+                                                                        "truncation": True,
+                                                                        "padding": "max_length"}),
+
                           'val': dataset['val'].map(tokenizer, input_columns=[col_name],
                                                fn_kwargs={"max_length": args.max_length,
                                                           "truncation": True,
                                                           "padding": "max_length"})
                           }
 
-    if args.verbos:
+    if args.verbose:
         utils.data_stats(tokenized_data=tokenized_datasets, out_dir=args.out_dir_LM, col_name=col_name)
 
     tokenized_datasets['train'].set_format('torch')
@@ -185,8 +103,8 @@ def LM_head(args, my_dictionary, validation_set):
     data_collator = DataCollatorForWholeWordMask(tokenizer=tokenizer, mlm=True,
                                                  mlm_probability=args.prob_for_mask)
 
-    # creat trainer
-    training_args = TrainingArguments(output_dir=args.out_dir_LM, overwrite_output_dir=True,
+    # create trainer
+    training_args = TrainingArguments(output_dir=args.out_dir, overwrite_output_dir=True,
                                       per_device_train_batch_size=args.batch_size,
                                       per_device_eval_batch_size=args.batch_size,
                                       gradient_accumulation_steps=args.grad_accum,
@@ -218,23 +136,23 @@ def LM_head(args, my_dictionary, validation_set):
     if args.language == 'HE':
         dummy_test(model, tokenizer)
     # save best model
-    utils.save_model(model, vars(args), os.path.join(args.out_dir_LM, 'best_model/'))
+    save_dir = os.path.join(args.out_dir, 'best_model/')
+    print("save best model in: ", save_dir)
+    utils.save_model(model, vars(args), save_dir)
     print('done')
 
-def classify_head(args,train_set_l, val_set,label_col = 'AFIB',mode ='Train', dir_to_load =None):
-    if args.language == 'HE':
-        col_name = 'Text'
+def classify_head(args, train_set_l, val_set, label_col='AFIB', mode='Train', load_dir=None):
+    col_name = 'Text' if args.language == 'HE' else 'text_en'
+
+    if load_dir is not None:
+        print("[classify_head] load model From: {}".format(load_dir))
+        model, _ = utils.load_model_for_classificaion(os.path.join(load_dir, 'best_model/'))
     else:
-        col_name ='text_en'
-
-    if dir_to_load is None:
-        if mode == 'Train':
-            dir_to_load =args.out_dir_LM
-        else:
-            dir_to_load = args.out_dir_Classify + "/" + label_col
-
-    model, config = utils.load_model_for_classificaion(os.path.join(dir_to_load, 'best_model/'))
-    # model = AutoModelForSequenceClassification.from_pretrained(args.model_name)
+        print("[classify_head] start training from pretrained: {} ".format(args.model_name))
+        # config = AutoConfig.from_pretrained(args.model_name)
+        # config.max_position_embeddings = 1024
+        # model = AutoModelForSequenceClassification.from_config(config)
+        model = AutoModelForSequenceClassification.from_pretrained(args.model_name)
 
     dataset = {
         'train': Dataset.from_pandas(train_set_l),
@@ -243,10 +161,7 @@ def classify_head(args,train_set_l, val_set,label_col = 'AFIB',mode ='Train', di
 
     #convert label_col from str to int
     dataset['val'] = dataset['val'].map(lambda x: x.update({label_col: int(x[label_col])}) or x)
-
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
-
-
     tokenized_datasets = {'train': dataset['train'].map(tokenizer, input_columns=[col_name],
                                                         fn_kwargs={"max_length": args.max_length,
                                                                    # Todo check that this is a good max
@@ -257,16 +172,12 @@ def classify_head(args,train_set_l, val_set,label_col = 'AFIB',mode ='Train', di
                                                                "truncation": True,
                                                                "padding": "max_length"})
                           }
-
-
-
     tokenized_datasets['train'].set_format('torch')
     tokenized_datasets['val'].set_format('torch')
-
     for split in tokenized_datasets:
         tokenized_datasets[split] = tokenized_datasets[split].add_column('label', dataset[split][label_col])
 
-    training_args = TrainingArguments(output_dir=args.out_dir_Classify, overwrite_output_dir=True,
+    training_args = TrainingArguments(output_dir=args.out_dir, overwrite_output_dir=True,
                                       per_device_train_batch_size=args.batch_size,
                                       per_device_eval_batch_size=args.batch_size,
                                       gradient_accumulation_steps=args.grad_accum,
@@ -293,7 +204,9 @@ def classify_head(args,train_set_l, val_set,label_col = 'AFIB',mode ='Train', di
     elif mode == 'Eval':
         trainer.evaluate()
     # save best model
-    utils.save_model(model, vars(args), os.path.join(args.out_dir_Classify, label_col+'/best_model/'))
+    save_dir = os.path.join(args.out_dir, 'best_model/')
+    print("save best model in: ", save_dir)
+    utils.save_model(model, vars(args), save_dir)
     print('done')
 
 
@@ -327,12 +240,23 @@ def dummy_test(model, tokenizer):
 
 if __name__ == '__main__':
     args = get_args()
+    print("args: ", args)
     utils.set_seed(args.seed)
     # train_set_nl, val_set, test_set, train_set_l = preprocessing(args)
-    df = load_preprocessed()
+    df = load_preprocessed(args.data_dir)
     train_set_nl, val_set, test_set, train_set_l = df['train_set'], df['val_set'], df['test_set'], df['labeled_data']
-    classify_head(args, train_set_l, test_set, label_col='VT',mode = 'Eval')
-    # classify_head(args, train_set_l, test_set, label_col='AFIB',mode = 'Train')
-    exit()
-    # LM_head(args=args, my_dictionary=train_set_nl, validation_set=val_set)
-    classify_head(args, train_set_l, val_set, label_col='VT')
+
+    if args.task == 'LM':
+        lm_train_set = pandas.concat([train_set_l, train_set_nl])
+        print("start LM train")
+        LM_head(args=args, train_set=lm_train_set, validation_set=val_set)
+
+    else:
+        label_col = args.task # VT of AFIB
+        print("start Classification [{}] train".format(args.task))
+        classify_head(args, train_set_l, val_set, label_col, mode='Train', load_dir=args.load_dir)
+
+        print("start Classification [{}] validation".format(args.task))
+        classify_head(args, train_set_l, val_set, label_col, mode='Eval', load_dir=args.out_dir)
+        print("start Classification [{}] test".format(args.task))
+        classify_head(args, train_set_l, test_set, label_col, mode = 'Eval', load_dir=args.out_dir)

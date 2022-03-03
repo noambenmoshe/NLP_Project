@@ -1,18 +1,15 @@
-import pandas as pd
 import torch
 import argparse
 import numpy as np
 import os
-from transformers import AutoTokenizer, AutoModel,pipeline
-from transformers import BertModel, BertTokenizerFast
-from transformers import AutoConfig, AutoModelForMaskedLM, TrainingArguments,Trainer, DataCollatorForWholeWordMask
-from transformers import AutoModelForSequenceClassification
+from transformers import AutoTokenizer,TrainingArguments,Trainer, AutoModelForSequenceClassification
 from datasets import Dataset
 import utils
 from preprocess import load_preprocessed
-from sklearn.metrics import f1_score, confusion_matrix
-from HeBERT.src.HebEMO import *
-from deep_model import get_args
+from sklearn.manifold import TSNE
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
+import matplotlib.pyplot as plt
 
 def bert_feature_extraction(model,
                             input_ids = None,
@@ -54,20 +51,8 @@ def bert_feature_extraction(model,
 
 
 
-def data_feature_extraction(args, train_set_l, val_set, label_col = 'AFIB'):
-
-    dir_to_load = args.out_dir_Classify
-    # dir_to_load = args.out_dir_LM
-
-    model, config = utils.load_model_for_classificaion(os.path.join(dir_to_load, 'best_model/'))
-    # model = AutoModelForSequenceClassification.from_pretrained(args.model_name)
-
-    if config['language'] == 'HE':
-        col_name = 'Text'
-    else:
-        col_name ='text_en'
-
-
+def data_feature_extraction(model, config, train_set_l, val_set, label_col = 'AFIB'):
+    col_name = 'Text' if config['language'] == 'HE' else 'text_en'
     dataset = {
         'train': Dataset.from_pandas(train_set_l),
         'val': Dataset.from_pandas(val_set.astype(str))
@@ -75,22 +60,17 @@ def data_feature_extraction(args, train_set_l, val_set, label_col = 'AFIB'):
 
     #convert label_col from str to int
     dataset['val'] = dataset['val'].map(lambda x: x.update({label_col: int(x[label_col])}) or x)
-
-    tokenizer = AutoTokenizer.from_pretrained(args.model_name)
-
-
+    tokenizer = AutoTokenizer.from_pretrained(config['model_name'])
     tokenized_datasets = {'train': dataset['train'].map(tokenizer, input_columns=[col_name],
-                                                        fn_kwargs={"max_length": args.max_length,
+                                                        fn_kwargs={"max_length": config['max_length'],
                                                                    # Todo check that this is a good max
                                                                    "truncation": True,
                                                                    "padding": "max_length"}),
                           'val': dataset['val'].map(tokenizer, input_columns=[col_name],
-                                                    fn_kwargs={"max_length": args.max_length,
+                                                    fn_kwargs={"max_length": config['max_length'],
                                                                "truncation": True,
                                                                "padding": "max_length"})
                           }
-
-
 
     tokenized_datasets['train'].set_format('torch')
     tokenized_datasets['val'].set_format('torch')
@@ -98,19 +78,19 @@ def data_feature_extraction(args, train_set_l, val_set, label_col = 'AFIB'):
     for split in tokenized_datasets:
         tokenized_datasets[split] = tokenized_datasets[split].add_column('label', dataset[split][label_col])
 
-
+    training_args = TrainingArguments(output_dir=os.path.join(model_dir, 'feature_extraction/'),
+                                      per_device_train_batch_size=1,
+                                      per_device_eval_batch_size=1,)
     trainer = Trainer(
         model=model,
-        # args=training_args,
+        args=training_args,
         train_dataset=tokenized_datasets['train'],
-        eval_dataset=tokenized_datasets['val'],
-        # compute_metrics=metric_fn_clssify
-    )
+        eval_dataset=tokenized_datasets['val'],)
 
     val_loader = trainer.get_eval_dataloader()
-
     all_labels = []
     all_features = []
+    model.eval()
     for batch in val_loader:
         inp = {k: v.to(model.device) for k,v in batch.items()}
         features = bert_feature_extraction(model, **inp)
@@ -119,12 +99,11 @@ def data_feature_extraction(args, train_set_l, val_set, label_col = 'AFIB'):
 
     all_labels = torch.concat(all_labels).numpy()
     all_features = torch.concat(all_features).numpy()
-    plot_tsne(all_features, all_labels)
 
-def plot_tsne(X, y):
-    from sklearn.manifold import TSNE
-    from sklearn.preprocessing import StandardScaler
-    import matplotlib.pyplot as plt
+    return all_features, all_labels
+
+
+def plot_tsne(X, y, model_name=''):
 
     dim = 2
     perplexity = 30.0
@@ -138,14 +117,17 @@ def plot_tsne(X, y):
     if dim == 2:
         fig = plt.figure(figsize=(8,5))
         ax = fig.add_subplot(1,1,1)
-        ax.scatter(X_embedded[np.where(y == 0)][:, 0], X_embedded[np.where(y == 0)][:, 1], color='r', marker='*', label='Malignant')
-        ax.scatter(X_embedded[np.where(y == 1)][:, 0], X_embedded[np.where(y == 1)][:, 1], color='b', marker='x', label='Benign')
+        ax.scatter(X_embedded[np.where(y == 0)][:, 0], X_embedded[np.where(y == 0)][:, 1], color='r', marker='*', label='False')
+        ax.scatter(X_embedded[np.where(y == 1)][:, 0], X_embedded[np.where(y == 1)][:, 1], color='b', marker='x', label='Positive')
         ax.grid()
         ax.legend()
-        ax.set_title("2D t-SNE of Bert hidden features")
+        ax.set_title("2D t-SNE - {}".format(model_name))
+
         plt.show()
 
-    print("done")
+    return X_embedded
+
+
     # outlayer
 # old/_t_sne.py:790: FutureWarning: The default learning rate in TSNE will change from 200.0 to 'auto' in 1.2.
 #   warnings.warn(
@@ -169,10 +151,114 @@ def plot_tsne(X, y):
 # np.argmax(X_embedded[:,0] == 5.112461)
 # 33
 
+def plot_pca(X, y, model_name=''):
+    dim = 2
+    perplexity = 30.0
+    scale_data = True
+    pca = PCA(n_components=dim)
+
+    if scale_data:
+        scaler = StandardScaler()
+        X = scaler.fit_transform(X)
+        X_embedded = pca.fit_transform(X)
+    if dim == 2:
+        fig = plt.figure(figsize=(8,5))
+        ax = fig.add_subplot(1,1,1)
+        ax.scatter(X_embedded[np.where(y == 0)][:, 0], X_embedded[np.where(y == 0)][:, 1], color='r', marker='*', label='False')
+        ax.scatter(X_embedded[np.where(y == 1)][:, 0], X_embedded[np.where(y == 1)][:, 1], color='b', marker='x', label='Positive')
+        ax.grid()
+        ax.legend()
+        ax.set_title("2D PCA - {}".format(model_name))
+        plt.show()
+    return X_embedded
 
 
 if __name__ == '__main__':
-    args = get_args()
-    df = load_preprocessed()
+    df = load_preprocessed('/home/b.noam/NLP_Project/preprocessed_data/')
     train_set_nl, val_set, test_set, train_set_l = df['train_set'], df['val_set'], df['test_set'], df['labeled_data']
-    data_feature_extraction(args, train_set_l, val_set)
+    # model_configs = [
+    #     {'model_dir': }
+    # ]
+    models_dir = './models2/alephbert/'
+    label_col = 'AFIB'
+    bert_model = 'AlephBert'
+
+
+
+    # else:
+    #     model = AutoModelForSequenceClassification.from_pretrained(model_name,
+    #                                                                num_labels=2)
+    #     config = {}
+    x_pca_all = []
+    x_tsne_all = []
+    y_all = []
+    names_all = []
+    # bluebert LM
+    model_dir = os.path.join(models_dir, 'lm')
+    model_name = bert_model + '-LM'
+    model, config = utils.load_model_for_classificaion(os.path.join(model_dir, 'best_model/'))
+    all_features, all_labels = data_feature_extraction(model, config, train_set_l, test_set, label_col=label_col)
+    x_tsne_all.append(plot_tsne(all_features, all_labels, model_name=model_name))
+    x_pca_all.append(plot_pca(all_features, all_labels, model_name=model_name))
+    y_all.append(all_labels)
+    names_all.append(model_name)
+
+    # bluebert pretrained - use config of bluebert_lm
+    model_name = bert_model + '-Pretrained'
+    model = AutoModelForSequenceClassification.from_pretrained(config['model_name'], num_labels=config['num_labels'])
+    all_features, all_labels = data_feature_extraction(model, config, train_set_l, test_set, label_col=label_col)
+    x_tsne_all.append(plot_tsne(all_features, all_labels, model_name=model_name))
+    x_pca_all.append(plot_pca(all_features, all_labels, model_name=model_name))
+    y_all.append(all_labels)
+    names_all.append(model_name)
+
+    # bluebert LM AFIB
+    model_name = bert_model + '-LM-Class'
+    model_dir = os.path.join(models_dir, 'lm_afib')
+    model, config = utils.load_model_for_classificaion(os.path.join(model_dir, 'best_model/'))
+    all_features, all_labels = data_feature_extraction(model, config, train_set_l, test_set, label_col=label_col)
+    x_tsne_all.append(plot_tsne(all_features, all_labels, model_name=model_name))
+    x_pca_all.append(plot_pca(all_features, all_labels, model_name=model_name))
+    y_all.append(all_labels)
+    names_all.append(model_name)
+
+    # bluebert AFIB
+    model_name = bert_model + '-Class'
+    model_dir = os.path.join(models_dir, 'afib')
+    model, config = utils.load_model_for_classificaion(os.path.join(model_dir, 'best_model/'))
+    all_features, all_labels = data_feature_extraction(model, config, train_set_l, test_set, label_col=label_col)
+    x_tsne_all.append(plot_tsne(all_features, all_labels, model_name=model_name))
+    x_pca_all.append(plot_pca(all_features, all_labels, model_name=model_name))
+    y_all.append(all_labels)
+    names_all.append(model_name)
+
+    # plot all tsne
+    fig, ax = plt.subplots(2, 2, figsize=(8, 6))
+    for i, (X_embedded, y, name) in enumerate(zip(x_tsne_all, y_all, names_all)):
+
+        ax[int(i / 2), i % 2].scatter(X_embedded[np.where(y == 0)][:, 0], X_embedded[np.where(y == 0)][:, 1], color='r',
+                                      marker='*',
+                                      label='Non AF')
+        ax[int(i / 2), i % 2].scatter(X_embedded[np.where(y == 1)][:, 0], X_embedded[np.where(y == 1)][:, 1], color='b',
+                                      marker='x',
+                                      label='AF')
+        ax[int(i / 2), i % 2].legend()
+        ax[int(i / 2), i % 2].set_title(name)
+    ax[0,1].legend()
+    fig.suptitle('2D t-SNE')
+    plt.savefig(os.path.join(models_dir, bert_model+'_pca.png'))
+    plt.show()
+
+    # plot all pca
+    fig, ax = plt.subplots(2, 2, figsize=(8, 6))
+    for i, (X_embedded, y, name) in enumerate(zip(x_pca_all, y_all, names_all)):
+        ax[int(i/2),i%2].scatter(X_embedded[np.where(y == 0)][:, 0], X_embedded[np.where(y == 0)][:, 1], color='r', marker='*',
+                   label='Non AF')
+        ax[int(i/2),i%2].scatter(X_embedded[np.where(y == 1)][:, 0], X_embedded[np.where(y == 1)][:, 1], color='b', marker='x',
+                   label='AF')
+        ax[int(i/2),i%2].legend()
+        ax[int(i/2),i%2].set_title(name)
+    ax[0, 1].legend()
+    fig.suptitle('2D PCA')
+    plt.savefig(os.path.join(models_dir, bert_model+'_pca.png'))
+    plt.show()
