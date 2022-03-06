@@ -7,6 +7,9 @@ import json
 from transformers import AutoModelForSequenceClassification
 import matplotlib.pyplot as plt
 
+
+
+
 def set_seed(seed=42):
     random.seed(seed)
     np.random.seed(seed)
@@ -42,18 +45,19 @@ def data_stats(tokenized_data, out_dir, col_name):
     # generate dataset statistics
     train_len = []
     val_len = []
-
+    data_len  =[]
 
     for i in tokenized_data['train']:
-        train_len.append(len(i[col_name]))
+        data_len.append(len(i[col_name]))
 
     for i in tokenized_data['val']:
-        val_len.append(len(i[col_name]))
+        data_len.append(len(i[col_name]))
+
 
     plt.figure()
-    hist = plt.hist(train_len,bins=1000, cumulative=True, label='CDF',
+    hist = plt.hist(data_len,bins=1000, cumulative=True, label='CDF',
              histtype='step', alpha=0.8, color='k', density=True)
-    plt.title('train reviews lengths CDF')
+    plt.title('Training Set Descriptions Length CDF')
     plt.xlim(xmin=0, xmax=500)
     plt.savefig(os.path.join(out_dir, 'train_review_length.png'))
     plt.show()
@@ -68,3 +72,15 @@ def data_stats(tokenized_data, out_dir, col_name):
     plt.show()
 
     return
+
+def len_list(tokenized_data,col_name):
+    data_len = []
+    for i in tokenized_data['train']:
+        data_len.append(len(i[col_name]))
+
+    for i in tokenized_data['val']:
+        data_len.append(len(i[col_name]))
+    return data_len
+
+
+

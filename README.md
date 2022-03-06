@@ -1,8 +1,7 @@
-To get started:
-if you want to use HeBert:
+Using Rambam hospital unlabeled database ofECG-Holters ids and corresponding doctor de-scriptions we propose an algorithm that clas-sifies from the description if the doctor thinksthat in a specific holter Atrial Fibrillation (AF)is recorded or not or whether the recording hasVentricular tachycardia (VT) or not.  In orderto succeed we had to over come some chal-lenges. The first is that the doctor descriptionsare in Hebrew. To over come this challenge wechecked two different methods.  One is usingAlephBert which is a model that was trained towork with Hebrew Text.  The other approachwas to use translation from Hebrew to Englishand then classify. The second challenge is thatwe are dealing with medical data which meansthat the data contains new vocabulary the mod-els were not trained on. To deal with this chal-lenge we experimented with BlueBERT whichwas trained on medical data. As a baseline weused previous work done in AIMLab whichused Google Translate to translate descriptionsfrom Hebrew to English and then defined rulesin order to classify. Our novelty is using deeplearning methods to tackle this problem and ouralgorithm reached better F1-score on the testset
 
-!pip install pyplutchik==0.0.7
+This repository will not run unless you have the database available.
+The purpose of this repository is to explain the steps taken to classify Hebrew doctor's descriptions.
+The non-deep baseline code is in baseline.py and the deep based methods are in deep_model.py.
 
-!pip install transformers==4.14.1
-
-!git clone https://github.com/avichaychriqui/HeBERT.git
+An elaborated explanation of the algorithm is in %%%%%%%%%%%%%%%%

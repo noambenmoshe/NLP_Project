@@ -1,34 +1,8 @@
 import os
-
 import pandas as pd
-import torch
-import argparse
-import numpy as np
-from transformers import AutoTokenizer, AutoModel,pipeline
-from transformers import BertModel, BertTokenizerFast
-from transformers import AutoConfig, AutoModelForMaskedLM, TrainingArguments,Trainer, DataCollatorForWholeWordMask
-from datasets import Dataset
 from deep_translator import GoogleTranslator
-from tqdm import tqdm
 
 def combine_text(df, col_a = 'text a', col_b ='text b'):
-    # combined_text_list = []
-    # for i, id in enumerate(df['holter_id']):
-    #     j = int(df['holter_id'][df['holter_id'] == id].index.values)
-    #     text_a = df[col_a][j]
-    #     text_b = df[col_b][j]
-    #     if pd.isna(text_a) or text_a == 0 or text_a == ' ':
-    #         text = ''
-    #     else:
-    #         text = text_a
-    #     if not (pd.isna(text_b) or text_b == 0 or text_b == ' '):
-    #         text = text + text_b
-    #
-    #     combined_text_list.append(text)
-    # assert len(combined_text_list) == len(
-    #     df), f' len(combined_text_list)= {len(combined_text_list)} len(my_dictionary)={len(my_dictionary)} need to be same length'
-    # df['Text'] = combined_text_list
-    #
     def concat_lines(text_a, text_b):
         if pd.isna(text_a) or text_a == 0 or text_a == ' ':
             text = ''

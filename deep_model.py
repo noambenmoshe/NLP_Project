@@ -1,4 +1,3 @@
-import pandas
 import pandas as pd
 import torch
 import argparse
@@ -13,19 +12,16 @@ import utils
 from preprocess import load_preprocessed
 from sklearn.metrics import f1_score, confusion_matrix
 from custom_trainer import CustomTrainer
-
+import matplotlib.pyplot as plt
 
 def metric_fn(predictions):
     preds = predictions.predictions.argmax(axis=2)
     labels = predictions.label_ids
-    # f1 = f1_score(preds, labels, average='binary')
     print(f' np.sum(preds == labels) = {np.sum(preds == labels)}')
     print(f'np.size(labels) = {np.size(labels)}')
     num_masks = np.sum(labels != -100)
     print(f'num_masks = {num_masks}')
     acc = np.sum(preds == labels) / num_masks
-    # acc = np.sum(preds == labels) / np.size(labels)
-    # return {'f1': f1, 'acc': acc}
     return{'acc': acc}
 
 
@@ -71,8 +67,39 @@ def get_args():
     args = parser.parse_args()
     return args
 
+def get_tokenizer(language, model_name,training_set, validation_set):
+    if language == 'HE':
+        col_name = 'Text'
+    else:
+        col_name = 'text_en'
+
+    dataset = {
+        'train': Dataset.from_pandas(training_set.astype(str)),
+        'val': Dataset.from_pandas(validation_set.astype(str))
+    }
+
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+
+    tokenized_datasets = {'train': dataset['train'].map(tokenizer, input_columns=[col_name],
+                                                        fn_kwargs={
+                                                                   # Todo check that this is a good max
+                                                                   "truncation": True,
+                                                                   "padding": True}),
+                          'val': dataset['val'].map(tokenizer, input_columns=[col_name],
+                                                    fn_kwargs={
+                                                               "truncation": True,
+                                                               "padding": True})
+                          }
+    return tokenized_datasets
 
 def LM_head(args, train_set, validation_set):
+    """
+
+    :param args: arguments defining the run's parameters
+    :param train_set: training set, doctor's descriptions
+    :param validation_set: validation set, doctor's descriptions
+    :return: a model that was training on the task of language modeling
+    """
     print(f'args.lanuage == {args.language}')
     col_name = 'Text' if args.language == 'HE' else 'text_en'
 
@@ -142,6 +169,17 @@ def LM_head(args, train_set, validation_set):
     print('done')
 
 def classify_head(args, train_set_l, val_set, label_col='AFIB', mode='Train', load_dir=None):
+    """
+
+    :param args: arguments defining the run's parameters
+    :param train_set_l: labeled training set, doctor's descriptions with a label
+    :param val_set: labeled validation set
+    :param label_col: AFIB or VT depending what needs to be classified
+    :param mode: Train or Eval - training to train the model, eval to only see the results on the validation set
+    :param load_dir: path to dir where load from the pre-trained model
+    :return: model that has been trained to classify label_col
+    """
+
     col_name = 'Text' if args.language == 'HE' else 'text_en'
 
     if load_dir is not None:
@@ -164,7 +202,6 @@ def classify_head(args, train_set_l, val_set, label_col='AFIB', mode='Train', lo
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
     tokenized_datasets = {'train': dataset['train'].map(tokenizer, input_columns=[col_name],
                                                         fn_kwargs={"max_length": args.max_length,
-                                                                   # Todo check that this is a good max
                                                                    "truncation": True,
                                                                    "padding": "max_length"}),
                           'val': dataset['val'].map(tokenizer, input_columns=[col_name],
@@ -237,8 +274,30 @@ def dummy_test(model, tokenizer):
         for _res in res:
             print(_res['sequence'])
 
+def plt_he_en_hist(out_dir):
+    df = load_preprocessed()
+    train_set_nl, val_set, test_set, train_set_l = df['train_set'], df['val_set'], df['test_set'], df['labeled_data']
+    training_set = pd.concat([train_set_nl, train_set_l])
+    he_tokenier = get_tokenizer('HE','onlplab/alephbert-base', training_set, val_set)
+    en_tokenier = get_tokenizer('EN','microsoft/BiomedNLP-PubMedBERT-base-uncased-abstract', training_set, val_set)
+    data_len_he = utils.len_list(he_tokenier, 'Text')
+    data_len_en = utils.len_list(en_tokenier, "text_en")
+
+    plt.figure()
+    he_hist = plt.hist(data_len_he, bins=1000, cumulative=True, label='CDF',
+             histtype='step', alpha=0.8, color='b', density=True)
+    en_hist = plt.hist(data_len_en, bins=1000, cumulative=True, label='CDF',
+             histtype='step', alpha=0.8, color='r', density=True)
+    plt.title('Description Lengths CDF')
+    plt.legend(['Hebrew descriptions', 'English descriptions'],loc= 'lower right')
+    plt.xlim(xmin=0, xmax=900)
+
+    plt.savefig(os.path.join(out_dir, 'val_review_length.png'))
+    plt.show()
 
 if __name__ == '__main__':
+    # plt_he_en_hist("./")
+    # exit()
     args = get_args()
     print("args: ", args)
     utils.set_seed(args.seed)
@@ -247,7 +306,7 @@ if __name__ == '__main__':
     train_set_nl, val_set, test_set, train_set_l = df['train_set'], df['val_set'], df['test_set'], df['labeled_data']
 
     if args.task == 'LM':
-        lm_train_set = pandas.concat([train_set_l, train_set_nl])
+        lm_train_set = pd.concat([train_set_l, train_set_nl])
         print("start LM train")
         LM_head(args=args, train_set=lm_train_set, validation_set=val_set)
 
