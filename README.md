@@ -4,4 +4,4 @@ This repository will not run unless you have the database available.
 The purpose of this repository is to explain the steps taken to classify Hebrew doctor's descriptions.
 The non-deep baseline code is in baseline.py and the deep based methods are in deep_model.py.
 
-An elaborated explanation of the algorithm is in %%%%%%%%%%%%%%%%
+An elaborated explanation of the algorithm is in [here](NLP_Project.pdf)
